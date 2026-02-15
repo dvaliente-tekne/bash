@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+IFS=$'\n\t'
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../lib/log.sh
+source "${SCRIPT_DIR}/../lib/log.sh"
+VERSION_FILE="${SCRIPT_DIR}/../VERSION"
+
+usage() {
+  cat <<EOF
+foo - example tool
+
+Usage:
+  foo [-n NAME] [--dry-run]
+Options:
+  -n NAME     Name to greet (default: world)
+  --dry-run   Print what would happen without executing
+  -h, --help  Show this help
+  --version   Show version
+EOF
+}
+
+NAME="world"
+DRY_RUN=0
+
+while (( "$#" )); do
+  case "${1:-}" in
+    -n) shift; NAME="${1:-}";;
+    --dry-run) DRY_RUN=1;;
+    -h|--help) usage; exit 0;;
+    --version) cat "${VERSION_FILE}"; exit 0;;
+    --) shift; break;;
+    -*) die "Unknown flag: $1";;
+    *) break;;
+  esac
+  shift || true
+
+done
+
+trap 'on_exit $?' EXIT
+log_info "Starting foo (name=$NAME dry_run=$DRY_RUN)"
+
+if (( DRY_RUN )); then
+  log_warn "Dry run: would greet ${NAME}"
+else
+  echo "Hello, ${NAME}!"
+fi

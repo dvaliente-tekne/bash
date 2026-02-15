@@ -1,0 +1,10 @@
+repos:
+  - repo: https://github.com/scop/pre-commit-shfmt
+    rev: v3.7.0
+    hooks:
+      - id: shfmt
+        args: ["-i", "4", "-ci"]
+  - repo: https://github.com/corpix/shellcheck-precommit
+    rev: v0.6.0
+    hooks:
+      - id: shellcheck

@@ -1,0 +1,2 @@
+This directory can contain Debian packaging metadata (debian/*).
+For a real package, you'd add control, rules, changelog, etc.

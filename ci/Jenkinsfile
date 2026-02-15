@@ -1,0 +1,21 @@
+pipeline {
+  agent any
+  stages {
+    stage('Checkout') { steps { checkout scm } }
+    stage('Tools') {
+      steps {
+        sh '''
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y shellcheck bats
+          curl -sSLo /usr/local/bin/shfmt https://github.com/mvdan/sh/releases/latest/download/shfmt_linux_amd64
+          chmod +x /usr/local/bin/shfmt
+        '''
+      }
+    }
+    stage('Format') { steps { sh 'make format' } }
+    stage('Lint')   { steps { sh 'make lint' } }
+    stage('Test')   { steps { sh 'make test' } }
+  }
+  options { timestamps() }
+}
