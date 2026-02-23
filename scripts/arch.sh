@@ -7,7 +7,7 @@ set -euo pipefail
 #######################################
 
 CONTAINER_NAME="${CONTAINER_NAME:-arch}"
-CONTAINER_IP="${CONTAINER_IP:-192.168.75.13}"
+CONTAINER_IP="${CONTAINER_IP:-172.20.0.13}"
 HOST_MOUNT="${HOST_MOUNT:-/var/www/arch/data}"
 DOCKER_NET="${DOCKER_NET:-dockers}"
 TKG_REPO="${TKG_REPO:-https://github.com/fiercebrake/tkg.git}"
@@ -43,6 +43,7 @@ get_image() {
 
     sed -i 's|podman # or docker|docker # or podman|g' "$build_dir/archlinux-docker/Makefile"
     sed -i 's|CMD\ \["/usr/bin/bash"\]||g' "$build_dir/archlinux-docker/Dockerfile.template"
+    sed -i 's|-f|--network=host -f|g' "$build_dir/archlinux-docker/Makefile"
 
     cat << 'DOCKER_EOF' >> "$build_dir/archlinux-docker/Dockerfile.template"
 RUN pacman -Syu --noconfirm --needed ansible-core ansible-lint ansible python python-pip python-pipx python-passlib \
@@ -51,8 +52,8 @@ RUN pacman -Syu --noconfirm --needed ansible-core ansible-lint ansible python py
                                      vim-devicons vim-ansible mlocate bash-completion pkgfile rsync git wget \
                                      reflector less libsecret gzip tar zlib xz openssh openssl sudo bind inetutils \
                                      whois nginx curl nginx screen ccid zenity wireplumber udisks2 p7zip udftools sed \
-                                     dosfstools f2fs-tools exfatprogs exfat-utils iptables-nft gnupg zip unzip fuse \
-                                     q make pkg-config openbsd-netcat  shfmt gsmartcontrol shellcheck bats cpupower
+                                     gnupg zip unzip fuse jq make pkg-config openbsd-netcat shfmt gsmartcontrol \
+                                     shellcheck bats cpupower
 ENTRYPOINT ["/usr/bin/nginx", "-g", "daemon off;"]
 DOCKER_EOF
 
@@ -67,7 +68,7 @@ run_image() {
 }
 
 post_conf() {
-    sudo docker exec "$CONTAINER_NAME" mv /usr/bin/vi /usr/bin/vi-bak
+    # sudo docker exec -it "$CONTAINER_NAME" mv /usr/bin/vi /usr/bin/vi-bak
     sudo docker exec "$CONTAINER_NAME" ln -sf /usr/bin/vim /usr/bin/vi
 
     sudo docker exec "$CONTAINER_NAME" bash -c 'cat > /etc/sudoers.d/repo << EOF
@@ -89,12 +90,11 @@ main() {
         exit 0
     fi
 
-    if sudo docker ps -a -q -f "name=^${CONTAINER_NAME}$" | grep -q .; then
-        echo "Container '$CONTAINER_NAME' already exists. Remove it first: docker rm -f $CONTAINER_NAME" >&2
-        exit 1
-    fi
-
-    get_image
+    # if sudo docker ps -a -q -f "name=^${CONTAINER_NAME}$" | grep -q .; then
+        # echo "Container '$CONTAINER_NAME' already exists. Remove it first: docker rm -f $CONTAINER_NAME" >&2
+        # exit 1
+    # fi
+    # get_image
     run_image
     post_conf
 }
