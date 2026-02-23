@@ -1,0 +1,285 @@
+#!/bin/bash
+set -euo pipefail
+
+#######################################
+# Configuration
+#######################################
+readonly REPO_DIR="${REPO_DIR:-/var/local/repo-tekne}"
+readonly REPO_NAME="themis"
+readonly LOG_DIR="${REPO_DIR}/logs"
+readonly LOG_FILE="${LOG_DIR}/build_$(date +%Y%m%d_%H%M%S).log"
+readonly REPO_USER="repo"
+
+declare -a PACKAGES=(
+    'onedrive-abraunegg' 'google-chrome' 'microsoft-edge-stable-bin' 'blesh-git'
+    'ocs-url' 'aic94xx-firmware' 'ast-firmware' 'wd719x-firmware' 'upd72020x-fw'
+    'laptop-mode-tools-git' 'schedtoold' 'zoom' 'ventoy-bin' 'visual-studio-code-bin'
+    'proton-ge-custom-bin' 'teams-for-linux-bin' 'sound-theme-smooth' 'bitwarden-bin'
+    'pikaur' 'yubico-authenticator-bin' 'bibata-cursor-theme-bin' 'flat-remix'
+    'kora-icon-theme' 'httpfs2-2gbplus' 'ttf-ms-win10-auto' 'libwireplumber-4.0-compat'
+    'heroic-games-launcher' 'crossover' 'deezer' 'wps-office' 'libtiff5' 'cursor-bin'
+    'omnissa-horizon-client' 'linux-tkg' 'linux-tkg-alk' 'nvidia-all' 'wine-tkg-git'
+)
+
+# Packages that need to be installed after building (build dependencies)
+declare -a INSTALL_AFTER_BUILD=('httpfs2-2gbplus' 'libwireplumber-4.0-compat' 'linux-tkg')
+
+# Frogging-Family packages (GitHub instead of AUR)
+declare -A FROGGING_PACKAGES=(
+    ['linux-tkg']=1
+    ['linux-tkg-alk']=1
+    ['nvidia-all']=1
+    ['wine-tkg-git']=1
+    ['proton-tkg']=1
+)
+
+#######################################
+# Logging
+#######################################
+log() {
+    local level="$1"
+    shift
+    local msg="$*"
+    local timestamp
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo "[$timestamp] [$level] $msg" | tee -a "$LOG_FILE"
+}
+
+log_info()  { log "INFO" "$@"; }
+log_warn()  { log "WARN" "$@"; }
+log_error() { log "ERROR" "$@"; }
+
+#######################################
+# Error handling
+#######################################
+declare -a FAILED_PACKAGES=()
+declare -a SUCCESS_PACKAGES=()
+
+cleanup() {
+    local exit_code=$?
+    if [[ $exit_code -ne 0 ]]; then
+        log_error "Script failed with exit code $exit_code"
+    fi
+    print_summary
+}
+trap cleanup EXIT
+
+print_summary() {
+    echo ""
+    log_info "========== BUILD SUMMARY =========="
+    log_info "Successful: ${#SUCCESS_PACKAGES[@]}"
+    log_info "Failed: ${#FAILED_PACKAGES[@]}"
+    
+    if [[ ${#FAILED_PACKAGES[@]} -gt 0 ]]; then
+        log_warn "Failed packages: ${FAILED_PACKAGES[*]}"
+    fi
+    log_info "Log file: $LOG_FILE"
+}
+
+#######################################
+# Validation
+#######################################
+validate_package_name() {
+    local pkg="$1"
+    # Only allow alphanumeric, dash, underscore, and dot
+    if [[ ! "$pkg" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+        log_error "Invalid package name: $pkg"
+        return 1
+    fi
+    return 0
+}
+
+#######################################
+# Network check
+#######################################
+check_network() {
+    log_info "Checking network connectivity..."
+    if ! ping -c 1 -W 5 'aur.archlinux.org' > /dev/null 2>&1; then
+        log_error "Cannot reach aur.archlinux.org - network down or unreachable"
+        exit 1
+    fi
+    log_info "Network OK"
+}
+
+#######################################
+# System update
+#######################################
+update_mirrors() {
+    log_info "Updating mirrorlist..."
+    /usr/bin/reflector --country 'United States' --latest 100 --sort rate \
+        --protocol https,ftp --age 24 --save /etc/pacman.d/mirrorlist
+    
+    log_info "Running system update..."
+    pacman -Syu --noconfirm
+}
+
+#######################################
+# Package operations
+#######################################
+del_folder() {
+    local pkg="$1"
+    validate_package_name "$pkg" || return 1
+    
+    local target_dir="${REPO_DIR}/${pkg}"
+    if [[ -d "$target_dir" ]]; then
+        log_info "Removing existing directory: $target_dir"
+        rm -rf "$target_dir"
+    fi
+}
+
+get_source_url() {
+    local pkg="$1"
+    
+    # Handle linux-tkg-alk specially - it uses the linux-tkg repo
+    if [[ "$pkg" == "linux-tkg-alk" ]]; then
+        echo "https://github.com/Frogging-Family/linux-tkg.git"
+        return
+    fi
+    
+    if [[ -n "${FROGGING_PACKAGES[$pkg]:-}" ]]; then
+        echo "https://github.com/Frogging-Family/${pkg}.git"
+    else
+        echo "https://aur.archlinux.org/${pkg}.git"
+    fi
+}
+
+get_folder() {
+    local pkg="$1"
+    validate_package_name "$pkg" || return 1
+    
+    local url
+    url=$(get_source_url "$pkg")
+    
+    log_info "Cloning $pkg from $url"
+    sudo -u "$REPO_USER" git clone "$url" "${REPO_DIR}/${pkg}" 2>&1 | tee -a "$LOG_FILE"
+}
+
+apply_config() {
+    local pkg="$1"
+    local config_file="${REPO_DIR}/repo-${pkg}.cfg"
+    local target_dir="${REPO_DIR}/${pkg}"
+    
+    case "$pkg" in
+        linux-tkg|linux-tkg-alk|nvidia-all)
+            if [[ -f "$config_file" ]]; then
+                log_info "Applying config: $config_file"
+                cp "$config_file" "${target_dir}/customization.cfg"
+            fi
+            ;;
+        wine-tkg-git)
+            config_file="${REPO_DIR}/repo-wine-tkg-git.cfg"
+            if [[ -f "$config_file" ]]; then
+                log_info "Applying config: $config_file"
+                cp "$config_file" "${target_dir}/${pkg}/customization.cfg"
+            fi
+            ;;
+    esac
+}
+
+get_build_dir() {
+    local pkg="$1"
+    if [[ "$pkg" == "wine-tkg-git" ]]; then
+        echo "${REPO_DIR}/${pkg}/${pkg}"
+    else
+        echo "${REPO_DIR}/${pkg}"
+    fi
+}
+
+build_package() {
+    local pkg="$1"
+    local build_dir
+    build_dir=$(get_build_dir "$pkg")
+    
+    log_info "Building $pkg in $build_dir"
+    
+    if ! sudo -u "$REPO_USER" makepkg \
+        --needed --noconfirm --syncdeps --cleanbuild \
+        --clean --skippgpcheck --force \
+        --dir "$build_dir" 2>&1 | tee -a "$LOG_FILE"; then
+        log_error "Failed to build $pkg"
+        return 1
+    fi
+    
+    # Install if it's a build dependency
+    for install_pkg in "${INSTALL_AFTER_BUILD[@]}"; do
+        if [[ "$pkg" == "$install_pkg" ]]; then
+            log_info "Installing $pkg (build dependency)"
+            pacman --needed --noconfirm -U "${REPO_DIR}/${pkg}"/*.pkg.tar.zst
+            break
+        fi
+    done
+    
+    return 0
+}
+
+process_package() {
+    local pkg="$1"
+    log_info "========== Processing: $pkg =========="
+    
+    del_folder "$pkg" || return 1
+    get_folder "$pkg" || return 1
+    apply_config "$pkg"
+    
+    if build_package "$pkg"; then
+        SUCCESS_PACKAGES+=("$pkg")
+        log_info "Successfully built: $pkg"
+    else
+        FAILED_PACKAGES+=("$pkg")
+        log_warn "Failed to build: $pkg (continuing...)"
+    fi
+}
+
+#######################################
+# Repository management
+#######################################
+create_repo() {
+    local repo_out="${REPO_DIR}/repo"
+    
+    log_info "Creating repository database..."
+    
+    # Ensure repo directory exists
+    sudo -u "$REPO_USER" mkdir -p "$repo_out"
+    
+    # Move all built packages
+    find "${REPO_DIR}" -maxdepth 2 -name "*.pkg.tar.zst" -exec mv -f {} "$repo_out/" \; 2>/dev/null || true
+    find "${REPO_DIR}" -maxdepth 3 -name "*.pkg.tar.zst" -exec mv -f {} "$repo_out/" \; 2>/dev/null || true
+    
+    # Remove old database files
+    rm -f "${repo_out}/${REPO_NAME}"*
+    
+    # Create repository database
+    sudo -u "$REPO_USER" repo-add -n -v \
+        "${repo_out}/${REPO_NAME}.db.tar.gz" \
+        "${repo_out}"/*.pkg.tar.zst 2>&1 | tee -a "$LOG_FILE"
+    
+    log_info "Repository created at: $repo_out"
+}
+
+#######################################
+# Main
+#######################################
+main() {
+    # Create log directory
+    mkdir -p "$LOG_DIR"
+    sudo -u "$REPO_USER" mkdir -p "${REPO_DIR}/repo"
+    
+    log_info "Starting package repository build"
+    log_info "Repository directory: $REPO_DIR"
+    log_info "Packages to build: ${#PACKAGES[@]}"
+    
+    check_network
+    update_mirrors
+    
+    for pkg in "${PACKAGES[@]}"; do
+        process_package "$pkg"
+    done
+    
+    create_repo
+    
+    log_info "Build process completed"
+}
+
+# Run if executed directly
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
