@@ -95,8 +95,8 @@ main() {
         echo "Container '$CONTAINER_NAME' already exists. Remove it first: docker rm -f $CONTAINER_NAME" >&2
         exit 1
     fi
-    get_image
-    run_image
+    # get_image
+    # run_image
     post_conf
 }
 
