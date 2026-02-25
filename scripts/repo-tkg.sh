@@ -16,7 +16,7 @@ readonly LOCAL_REPO_DIR="${LOCAL_REPO_DIR:-/srv/repo/tekne}"
 readonly OUTPUT_REPO_DIR="${OUTPUT_REPO_DIR:-/srv/repo/tekne}"
 readonly REPO_NAME="tekne"
 readonly BUILD_DIR="${BUILD_DIR:-/tmp/tkg-build-tekne}"
-readonly REPO_USER="${REPO_USER:-$USER}"
+readonly REPO_USER="${REPO_USER:-$(id -un)}"
 readonly LOG_DIR="${OUTPUT_REPO_DIR}/logs"
 LOG_FILE="${LOG_DIR}/build_$(date +%Y%m%d_%H%M%S).log"
 readonly LOG_FILE
