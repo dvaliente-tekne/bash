@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+#SPDX-License-Identifier: MIT-0
+#
+# repos.sh - Push, pull, or status for all git repos in a folder (uses PAT)
+#
+# Usage:
+#   repos.sh status              # Show git status for all repos
+#   repos.sh pull                # Pull latest (uses PAT if GH_PAT set)
+#   repos.sh push                # Push changes (uses PAT if GH_PAT set)
+#   repos.sh push -m "msg"       # Push with commit (stages all, commits, pushes)
+#   repos.sh -d /path/to/repos status
+#
+# PAT: Set GH_PAT for push/pull. The script sets origin URL to use it:
+#   export GH_PAT='github_pat_...'
+#   ./repos.sh pull
+#
+
+set -euo pipefail
+
+readonly SCRIPT_NAME="$(basename "$0")"
+readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+usage() {
+    cat << EOF
+Usage: $SCRIPT_NAME [-d DIR] {status|pull|push} [-m "msg"]
+
+Actions:
+  status    Show git status for each repo
+  pull      Git pull (rebase) in each repo (uses PAT if GH_PAT set)
+  push      Add -A, commit (if changes), push in each repo (uses PAT if GH_PAT set)
+            -m "msg"  Commit message (default: "Update")
+
+Options:
+  -d DIR    Directory containing git repos (default: /srv/code/tekne)
+  -h        Show this help
+
+Environment:
+  GH_PAT    GitHub Personal Access Token for push/pull authentication.
+            When set, origin URL is temporarily updated to use the PAT.
+
+Examples:
+  export GH_PAT='github_pat_...'
+  $SCRIPT_NAME status
+  $SCRIPT_NAME pull
+  $SCRIPT_NAME push
+  $SCRIPT_NAME push -m "Fix haproxy config"
+  $SCRIPT_NAME -d /srv/code/tekne/ansible pull
+EOF
+    exit 0
+}
+
+# Parse -d and -h
+# Default: workspace root (parent of bash/bin) = /srv/code/tekne
+REPOS_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+while getopts "d:h" opt; do
+    case "$opt" in
+        d) REPOS_DIR="$OPTARG" ;;
+        h) usage ;;
+        *) usage ;;
+    esac
+done
+shift $((OPTIND - 1))
+
+ACTION="${1:-}"
+shift || true
+
+# Optional -m "msg" for push (commit message)
+COMMIT_MSG="Update"
+if [[ "$ACTION" == "push" && "${1:-}" == "-m" && -n "${2:-}" ]]; then
+    COMMIT_MSG="$2"
+    shift 2
+fi
+
+if [[ -z "$ACTION" ]]; then
+    echo "ERROR: Action required (status, pull, push)." >&2
+    usage
+fi
+
+case "$ACTION" in
+    status|pull|push) ;;
+    *)
+        echo "ERROR: Invalid action '$ACTION'. Use status, pull, or push." >&2
+        exit 1
+        ;;
+esac
+
+if [[ ! -d "$REPOS_DIR" ]]; then
+    echo "ERROR: Directory not found: $REPOS_DIR" >&2
+    exit 1
+fi
+
+# Find subdirs that contain .git (direct children only)
+find_repos() {
+    local dir="$1"
+    for sub in "$dir"/*/; do
+        [[ -d "$sub" ]] || continue
+        [[ -d "${sub}.git" ]] && echo "$sub"
+    done
+}
+
+# Extract owner/repo from various GitHub URL forms
+# Handles: https://github.com/o/r, https://user@github.com/o/r, https://user:token@github.com/o/r
+get_github_repo_path() {
+    local url="$1"
+    if [[ "$url" =~ github\.com[:/]([^/]+/[^/]+\.git|[^/]+/[^/]+) ]]; then
+        echo "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    return 1
+}
+
+# Inject PAT into origin URL for the duration of a git command
+run_with_pat() {
+    local repo_dir="$1"
+    shift
+    local cmd=("$@")
+
+    if [[ -n "${GH_PAT:-}" ]]; then
+        (
+            cd "$repo_dir"
+            origin_url="$(git remote get-url origin 2>/dev/null || true)"
+            repo_path="$(get_github_repo_path "$origin_url" 2>/dev/null || true)"
+            if [[ -n "$repo_path" ]]; then
+                pat_url="https://${GH_PAT}@github.com/${repo_path}"
+                git remote set-url origin "$pat_url"
+                if "${cmd[@]}"; then
+                    :
+                else
+                    rc=$?
+                    git remote set-url origin "$origin_url"
+                    exit $rc
+                fi
+                git remote set-url origin "$origin_url"
+            else
+                "${cmd[@]}"
+            fi
+        )
+    else
+        (cd "$repo_dir" && "${cmd[@]}")
+    fi
+}
+
+main() {
+    local repos
+    repos=($(find_repos "$REPOS_DIR"))
+
+    if [[ ${#repos[@]} -eq 0 ]]; then
+        echo "No git repositories found in $REPOS_DIR"
+        exit 0
+    fi
+
+    echo "Found ${#repos[@]} repo(s) in $REPOS_DIR"
+    echo ""
+
+    for repo in "${repos[@]}"; do
+        name="$(basename "$repo")"
+        echo "=== $name ==="
+
+        case "$ACTION" in
+            status)
+                (cd "$repo" && git status -s)
+                ;;
+            pull)
+                run_with_pat "$repo" git pull --rebase
+                ;;
+            push)
+                (cd "$repo" && git add -A && { git diff --staged --quiet || git commit -m "$COMMIT_MSG"; })
+                run_with_pat "$repo" git push
+                ;;
+        esac
+        echo ""
+    done
+}
+
+main
