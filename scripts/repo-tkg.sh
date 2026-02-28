@@ -189,12 +189,12 @@ get_upstream_version() {
 
 upstream_greater_than_local() {
     local pkg="$1"
-    local variant="$2"  # Used for logging; local version uses any matching package
+    local variant="$2"  # For linux-tkg: aster/themis/yugen - only compare against that variant's package
     local cfg_file="$3"
     local upstream local_ver cmp
 
     upstream=$(get_upstream_version "$pkg" "$cfg_file") || return 0  # Can't get -> build
-    local_ver=$(get_local_version "$pkg" "")
+    local_ver=$(get_local_version "$pkg" "$variant")
 
     if [[ -z "$local_ver" ]]; then
         return 0  # No local version -> build
