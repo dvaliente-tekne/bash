@@ -81,7 +81,7 @@ EOF'
     sudo docker exec "$CONTAINER_NAME" sed -i 's|/usr/share/nginx/html|/var/local/tekne-repo|g' /etc/nginx/nginx.conf
     # sudo docker exec "$CONTAINER_NAME" bash -c "git clone $TKG_REPO /mnt/tkg"
     sudo docker exec "$CONTAINER_NAME" bash -c "chown -R repo:repo /mnt/tkg/ && chown -R repo:repo /srv/code && chown -R repo:repo /var/local/repo-tekne"
-    sudo docker exec "$CONTAINER_NAME" bash -c "sudo -u repo git clone https://github.com/dvaliente-tekne/bash /srv/code/tekne/bash"
+    sudo docker exec "$CONTAINER_NAME" bash -c "sudo -u repo git clone https://github.com/tekne-ops/bash /srv/code/tekne/bash"
     sudo docker restart "$CONTAINER_NAME"
 }
 

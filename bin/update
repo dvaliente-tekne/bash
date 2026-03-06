@@ -1,4 +1,4 @@
 #!/bin/bash
 
 sudo pacman -Syu --needed && pikaur -Syu --needed
-fwupdmgr refresh --force && fwupdmgr get-updates && fwupdmgr update
+sudo fwupdmgr refresh --force && sudo fwupdmgr get-updates && sudo fwupdmgr update
